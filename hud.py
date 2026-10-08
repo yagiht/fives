@@ -367,7 +367,7 @@ class Hud:
         self.title_dot = (tx - 16, ty - 9)
 
         keys = [("CMD+SHIFT", "SCROLL"), ("CMD+ESC", "DRAW"), ("OPT", "INK"),
-                ("C", "CURSOR"), ("H", "VIEW"), ("T", "HOLO"), ("[ ]", "TINT"), ("Q", "QUIT")]
+                ("C", "CURSOR"), ("CTRL+SHIFT", "MUSIC"), ("PALM SWIPE", "MUSIC"), ("H", "VIEW"), ("T", "HOLO"), ("[ ]", "TINT"), ("Q", "QUIT")]
         pieces = [(a, b, d.text_width(a, 0.36, 1, 1) + 8 + d.text_width(b, 0.34, 1, 2) + 20) for a, b in keys]
         total = sum(p[2] for p in pieces) + 6 * (len(pieces) - 1)
         x, y = W / 2 - total / 2, H - m - 32
@@ -383,7 +383,7 @@ class Hud:
         vx1 = self.vx0 + self.vw
         self._dyn = [                        # (x0, y0, x1, y1) in real pixels: the panels whose text changes
             (int((lx - 14) * k), int((H * 0.19 - 24) * k), int((self.vx0 - 30) * k), int((H * 0.80) * k)),
-            (int(max(self.rx - 200, vx1 + 30) * k), int((ry - 22) * k), int((self.rx + 14) * k), int((self.sy + 3 * 22 + 4) * k)),
+            (int(max(self.rx - 200, vx1 + 30) * k), int((ry - 22) * k), int((self.rx + 14) * k), int((self.sy + 4 * 22 + 4) * k)),
         ]
         roi = (slice(self.dvy0, self.dvy0 + self.dvh), slice(self.dvx0, self.dvx0 + self.dvw))
         self._roi = roi
@@ -468,6 +468,13 @@ class Hud:
             d.text(view, f"X {points[8][0]:.2f}  Y {points[8][1]:.2f}", (tip[0] + 50, tip[1] - 34), 0.34, PALE, 1, 1)
         if found and aim is not None:
             self._bracket(view, to_px(aim), state, progress)
+        flash = info.get("flash")
+        if flash:                                              # e.g. "MUSIC HIDDEN" after a flick
+            tw = d.text_width(flash, 0.5, 2, 4, FONT_BOLD)
+            fx, fy = (self.vw - tw) / 2, 46
+            d.rect(view, (fx - 14, fy - 24), (fx + tw + 14, fy + 10), DARK, -1)
+            d.rect(view, (fx - 14, fy - 24), (fx + tw + 14, fy + 10), BLUE, 1)
+            d.text(view, flash, (fx, fy), 0.5, WHITE, 2, 4, FONT_BOLD)
 
         out[self._roi] = view
         out_roi = out[self._roi]                              # the cut-off corners belong to the visor frame
@@ -520,11 +527,12 @@ class Hud:
         d.text(out, f"DETECT {info.get('detect_ms', 0):.0f} MS", (rx, ry + 54), 0.36, WHITE, 1, 2, right=True)
         d.text(out, f"LAG {info.get('lag_ms', 0):.0f} MS", (rx, ry + 72), 0.36, WHITE, 1, 2, right=True)
         view_word = "VIEW HAND" if not cam else f"VIEW CAM {int(round(self.strength * 100))}%"
-        rows_sw = [("CURSOR", info.get("cursor_on", False)), ("DRAW", info.get("draw_on", False)), (view_word, True)]
+        rows_sw = [("CURSOR", info.get("cursor_on", False)), ("DRAW", info.get("draw_on", False)), (view_word, True),
+                   ("PALM", info.get("palm", False))]
         for i, (name, on) in enumerate(rows_sw):
             y = self.sy + i * 22
             d.circle(out, (rx - 4, y - 4), 4, BLUE if on else DIM, -1)
-            word = name if name.startswith("VIEW") else f"{name} {'ON' if on else 'OFF'}"
+            word = name if name.startswith("VIEW") else (f"PALM {'OPEN' if on else '--'}" if name == "PALM" else f"{name} {'ON' if on else 'OFF'}")
             d.text(out, word, (rx - 16, y), 0.38, WHITE if on else GREY, 1, 3, right=True)
         return out
 

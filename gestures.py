@@ -7,9 +7,11 @@ Every point is (x, y) where x and y go from 0.0 to 1.0 across the image:
 """
 
 import math
+from collections import deque
 
 # The 21 landmarks MediaPipe finds on a hand, by index number.
 WRIST = 0
+THUMB_IP = 3
 THUMB_TIP = 4
 INDEX_KNUCKLE = 5
 INDEX_PIP = 6          # the middle joint of each finger
@@ -55,6 +57,81 @@ def scroll_pose(points, factor: float = 1.1) -> bool:
             and finger_extended(points, MIDDLE_TIP, MIDDLE_PIP, factor)
             and not finger_extended(points, RING_TIP, RING_PIP, factor)
             and not finger_extended(points, PINKY_TIP, PINKY_PIP, factor))
+
+
+def open_palm(points, factor: float = 1.2) -> bool:
+    """A flat open hand: all four fingers AND the thumb sticking out, thumb not touching the index.
+    Pointing (index only), a pinch, a fist and a relaxed half-curled hand are NOT open palms."""
+    fingers = ((INDEX_TIP, INDEX_PIP), (MIDDLE_TIP, MIDDLE_PIP), (RING_TIP, RING_PIP), (PINKY_TIP, PINKY_PIP))
+    return (all(finger_extended(points, tip, pip, factor) for tip, pip in fingers)
+            and finger_extended(points, THUMB_TIP, THUMB_IP, 1.0 + (factor - 1.0) / 2)
+            and pinch_ratio(points) > 0.6)
+
+
+class FlickDetector:
+    """Spots a quick sideways swipe of an open hand.
+
+    Feed it every frame with update() (and miss() on frames with no hand). It answers "left", "right"
+    or None, where left / right are the way you moved your hand (the picture is mirrored, like a mirror).
+
+    A flick is: open palm, travelling at least `distance` hand-sizes sideways within `seconds`, mostly
+    sideways (not up or down), and not within `cooldown` of the last one. Distances are in hand sizes
+    (wrist to middle knuckle), so it works near or far from the camera.
+
+    A fast swipe blurs the picture, so the camera sometimes loses the hand or sees it half-closed for a
+    frame or two. We forgive gaps shorter than `grace` seconds instead of starting over.
+    """
+
+    def __init__(self, distance=1.2, seconds=0.45, cooldown=1.0, sideways=0.7, palm_factor=1.15, grace=0.2):
+        self.distance, self.seconds, self.cooldown = distance, seconds, cooldown
+        self.sideways, self.palm_factor, self.grace = sideways, palm_factor, grace
+        self.trail = deque()          # (time, x, y, hand size) while the palm is open
+        self.last_flick = -1e9
+        self.last_open = -1e9         # when we last saw an open palm
+        self.is_open = False          # the palm is open right now (eyes.py freezes the cursor on this)
+        self.open_frames = 0
+        self.best = 0.0               # the longest sideways swipe so far in this open-hand spell (hand sizes)
+        self.last_best = 0.0          # ...and the one from the spell that just ended (for tuning messages)
+
+    def reset(self) -> None:
+        if self.open_frames >= 2:
+            self.last_best = self.best
+        self.trail.clear()
+        self.is_open = False
+        self.open_frames = 0
+        self.best = 0.0
+
+    def miss(self, t: float) -> None:
+        """A frame with no open palm (hand lost, or not open). Short gaps are forgiven."""
+        self.is_open = False
+        if t - self.last_open > self.grace:
+            self.reset()
+
+    def update(self, t: float, points):
+        if not open_palm(points, self.palm_factor):
+            self.miss(t)
+            return None
+        self.last_open = t
+        self.open_frames += 1
+        self.is_open = self.open_frames >= 2            # one stray frame doesn't count
+        x, y = points[MIDDLE_KNUCKLE]
+        self.trail.append((t, x, y, hand_size(points)))
+        while self.trail and t - self.trail[0][0] > self.seconds:
+            self.trail.popleft()
+        if len(self.trail) < 3:
+            return None
+        t0, x0, y0, s0 = self.trail[0]
+        size = (s0 + self.trail[-1][3]) / 2
+        dx, dy = (x - x0) / size, (y - y0) / size
+        if abs(dx) > self.best and abs(dy) <= self.sideways * abs(dx):
+            self.best = abs(dx)
+        if t - self.last_flick < self.cooldown:
+            return None
+        if abs(dx) >= self.distance and abs(dy) <= self.sideways * abs(dx):
+            self.last_flick = t
+            self.trail.clear()
+            return "right" if dx > 0 else "left"
+        return None
 
 
 class PinchDetector:
@@ -216,7 +293,7 @@ class PositionHistory:
         self.items = []
 
 
-def to_screen(x: float, y: float, screen_w: int, screen_h: int, margin: float, pad: int = 6):
+def to_screen(x: float, y: float, screen_w: int, screen_h: int, margin: float, pad: int = 6, pad_y: int = 0):
     """Map a camera point (0-1) to screen pixels, using only the middle of the image.
 
     With margin 0.15, the box from 0.15 to 0.85 covers the whole screen, so
@@ -225,12 +302,16 @@ def to_screen(x: float, y: float, screen_w: int, screen_h: int, margin: float, p
     pad keeps the cursor a few pixels away from the very edge. pyautogui's
     emergency brake fires when the cursor touches a corner, so without this
     margin, reaching a corner would stop the whole program.
+
+    pad only applies left/right. Top and bottom use pad_y (0 = the very last pixel row) so
+    the Dock and menu bar, which pop up when the pointer touches the screen edge, can appear.
+    Corners stay safe because the brake needs BOTH x and y at an edge and x never gets there.
     """
     span = 1 - 2 * margin
     sx = min(max((x - margin) / span, 0.0), 1.0)
     sy = min(max((y - margin) / span, 0.0), 1.0)
     return (pad + int(sx * (screen_w - 1 - 2 * pad)),
-            pad + int(sy * (screen_h - 1 - 2 * pad)))
+            pad_y + int(sy * (screen_h - 1 - 2 * pad_y)))
 
 
 class ClickEngine:

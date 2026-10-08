@@ -20,6 +20,8 @@ Gestures in cursor mode:
       pinch = pen down at once, let go = pen up (no tail). For sketch pads.
 """
 
+import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -229,6 +231,44 @@ def lock_window_shape(title: str, w: int, h: int) -> bool:
     return False
 
 
+class PanelLink:
+    """Starts the music window (panel.py) as its own little program and sends it one-word commands.
+    Mac only. If anything goes wrong it just stays out of the way: the rest of eyes.py doesn't care."""
+
+    def __init__(self):
+        self.proc = None
+        if sys.platform != "darwin":
+            return
+        try:
+            args = [sys.executable, str(Path(__file__).with_name("panel.py"))]
+            if not config.PANEL_START_VISIBLE:
+                args.append("--hidden")
+            self.proc = subprocess.Popen(args, stdin=subprocess.PIPE, text=True, bufsize=1)
+        except Exception as e:
+            print("music window didn't start:", e)
+
+    def send(self, word: str) -> None:
+        if self.proc is None:
+            return
+        if self.proc.poll() is not None:            # it closed (or crashed): stop talking to it
+            self.proc = None
+            return
+        try:
+            self.proc.stdin.write(word + "\n")
+            self.proc.stdin.flush()
+        except Exception:
+            self.proc = None
+
+    def close(self) -> None:
+        if self.proc is not None:
+            try:
+                self.proc.stdin.close()             # it quits when we hang up
+                self.proc.wait(timeout=2)
+            except Exception:
+                self.proc.kill()
+            self.proc = None
+
+
 def ensure_model() -> str:
     """Download the hand-tracking model the first time (a few megabytes)."""
     if not MODEL_PATH.exists():
@@ -366,6 +406,16 @@ def main() -> None:
     elif config.DRAW_HOTKEY:
         draw_watcher = hotkey.HotkeyWatcher(config.DRAW_HOTKEY)
         draw_watcher.start()
+    panel = PanelLink() if config.PANEL else None
+    panel_key = None
+    if panel is not None and getattr(config, "PANEL_HOTKEY", None):
+        panel_key = hotkey.HotkeyWatcher(config.PANEL_HOTKEY)
+        panel_key.start()
+    flick = None
+    flash_text, flash_until = "", 0.0           # a short message in the HUD after a flick
+    if panel is not None and getattr(config, "FLICK", False):
+        flick = g.FlickDetector(config.FLICK_DISTANCE, config.FLICK_SECONDS, config.FLICK_COOLDOWN,
+                                palm_factor=config.FLICK_PALM_FACTOR)
     hud = (hud_mod.Hud(config.HUD_WIDTH, config.HUD_HEIGHT, config.HUD_VIEW, config.HUD_GLOW,
                        config.HUD_SCALE, config.HUD_STRENGTH, config.HUD_DENOISE) if config.HUD else None)
     window = f"{config.NAME} eyes"
@@ -460,6 +510,8 @@ def main() -> None:
             frame_time[0] = stamp
             hud_points = hud_aim = hud_gap = None     # what the HUD shows this frame
             hud_state, hud_progress = "", 0.0
+            if panel_key is not None and panel_key.consume_tap():
+                panel.send("toggle")
             if toggle is not None and toggle.consume_tap() and cursor_on:
                 if mouse is None:
                     mouse = Mouse()
@@ -491,6 +543,23 @@ def main() -> None:
                 palm_history.add(t, *palm)
                 ratio = g.pinch_ratio(points)           # thumb <-> index gap
                 last_gap[0] = ratio
+                palm_flat = False                       # open hand: freeze the cursor, listen for a flick
+                if flick is not None:
+                    busy = engine.state != "idle" or pinch.pinched or scroll_mode or draw_mode or key_draw
+                    direction = None if busy else flick.update(t, points)
+                    if busy:
+                        flick.reset()
+                    if getattr(config, "FLICK_DEBUG", False) and flick.last_best:
+                        if flick.last_best >= 0.4:      # a real swipe attempt (not just a hand twitching)
+                            print(f"palm swipe reached {flick.last_best:.2f} of {config.FLICK_DISTANCE} hand-sizes needed"
+                                  + ("" if flick.last_best >= config.FLICK_DISTANCE else "  (swipe farther or faster, or lower FLICK_DISTANCE)"))
+                        flick.last_best = 0.0
+                    palm_flat = flick.is_open and config.FLICK_FREEZE_CURSOR
+                    if direction:
+                        hide = direction == config.FLICK_HIDE
+                        panel.send("hide" if hide else "show")
+                        flash_text, flash_until = ("MUSIC HIDDEN" if hide else "MUSIC SHOWN"), time.monotonic() + 1.0
+                        print(f"flick {direction}: music window {'hidden' if hide else 'shown'}")
                 draw_tip = draw_smooth.update(*points[g.INDEX_TIP], t)    # calmer fingertip for key drawing
                 mid_ratio = g.middle_ratio(points)      # thumb <-> middle gap
                 # Dragging, or scrolling with your pinch held, gets a forgiving grip.
@@ -583,7 +652,7 @@ def main() -> None:
                         print("Emergency brake: the mouse hit a screen corner. Stopping.")
                         break
                     sx, sy = to_px(aim)
-                    if (sx, sy) != last_sent:           # a real mouse is silent when it's still
+                    if (sx, sy) != last_sent and not palm_flat:     # a real mouse is silent when it's still
                         if engine.state == "down" or pen.down or keypen.down:
                             mouse.drag(sx, sy)
                         else:
@@ -603,6 +672,8 @@ def main() -> None:
                     draw_reticle(frame, (int(aim[0] * w), int(aim[1] * h)), state, progress)
                 status = (state or "tracking") + f"   idx {ratio:.2f}  mid {mid_ratio:.2f}"
             else:
+                if flick is not None:
+                    flick.miss(stamp)                   # a blurry fast swipe can lose the hand for a frame or two
                 smooth.reset()
                 palm_smooth.reset()
                 draw_smooth.reset()
@@ -634,7 +705,9 @@ def main() -> None:
                 # detect = time MediaPipe spends finding your hand.
                 # lag    = time from the camera taking the picture to us knowing where the hand is.
                 info = dict(fps=fps, detect_ms=detect_ms, lag_ms=pipe_ms, cursor_on=cursor_on,
-                            draw_on=key_draw or draw_mode, gap=hud_gap)
+                            draw_on=key_draw or draw_mode, gap=hud_gap,
+                            palm=flick is not None and flick.is_open,
+                            flash=flash_text if time.monotonic() < flash_until else "")
                 shown = hud.render(shown_frame, hud_points, hud_aim, hud_state, hud_progress, info)
             else:
                 label = f"{status}   cursor {'ON' if cursor_on else 'off'}   {fps:.0f} fps"
@@ -650,6 +723,8 @@ def main() -> None:
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
+            if key == ord("m") and panel is not None:
+                panel.send("toggle")
             if key == ord("h") and hud is not None:
                 print("view:", "camera" if hud.toggle() == "cam" else "hand only")
             if key == ord("t") and hud is not None:
@@ -665,7 +740,9 @@ def main() -> None:
         release_everything()        # never leave the mouse button stuck down
         if watcher is not None:
             watcher.stop()
-        for w in (draw_watcher, toggle, pen_key):
+        if panel is not None:
+            panel.close()
+        for w in (draw_watcher, toggle, pen_key, panel_key):
             if w is not None:
                 w.stop()
         frames.close()

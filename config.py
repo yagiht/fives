@@ -222,3 +222,27 @@ HUD_DENOISE = 0.2           # 0 to 0.6: blends with the previous picture to calm
 HUD_CAMERA_WIDTH = 1280
 HUD_CAMERA_HEIGHT = 720
 TRACK_WIDTH = 640
+
+# --- Music window (panel.py) ---
+PANEL = True                          # False = don't start it
+PANEL_HOTKEY = ["ctrl", "shift"]      # tap these two together to show / hide the window
+PANEL_START_VISIBLE = True            # False = starts hidden until you tap the hotkey
+
+# --- Music window (panel.py) ---
+PANEL = True                          # False = don't start it
+PANEL_HOTKEY = ["ctrl", "shift"]      # tap these two together to show / hide the window
+PANEL_START_VISIBLE = True            # False = starts hidden until you tap the hotkey
+
+# --- Finger flick: swipe an OPEN hand sideways to hide / show the music window ---
+FLICK = True
+FLICK_HIDE = "right"            # swipe this way to hide the window; the other way brings it back
+FLICK_DISTANCE = 1.6            # how far to swipe, in hand sizes. Too easy to trigger? raise it (2.0). Won't trigger? lower it (1.2)
+FLICK_SECONDS = 0.35            # within this many seconds (a slow drift is not a flick)
+FLICK_COOLDOWN = 1.0            # seconds before the next flick can happen
+FLICK_PALM_FACTOR = 1.2         # how straight the fingers must be (1.1 = easy, 1.35 = strict)
+FLICK_FREEZE_CURSOR = True      # the cursor stays put while your palm is open
+FLICK_DISTANCE = 1.2
+FLICK_SECONDS = 0.45
+FLICK_PALM_FACTOR = 1.15
+FLICK_DEBUG = True
+FLICK_DISTANCE = 0.7
