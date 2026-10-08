@@ -214,6 +214,21 @@ HAND_BONES = [
 ]
 
 
+def lock_window_shape(title: str, w: int, h: int) -> bool:
+    """Mac only: keep the eyes window the same shape as the picture while you resize it.
+    (Without this, a tall window leaves gray space on top and pushes the picture to the bottom.)
+    Returns True once it worked, False if the window wasn't ready or this isn't a Mac."""
+    try:
+        from AppKit import NSApplication, NSMakeSize
+        for win in NSApplication.sharedApplication().windows():
+            if str(win.title()) == title:
+                win.setContentAspectRatio_(NSMakeSize(w, h))
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def ensure_model() -> str:
     """Download the hand-tracking model the first time (a few megabytes)."""
     if not MODEL_PATH.exists():
@@ -357,6 +372,8 @@ def main() -> None:
     if hud is not None:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window, *hud.size)       # shown at layout size; drawn at HUD_SCALE x for sharpness
+    shape_locked = hud is None        # tries a few frames after the window opens, then stops
+    shape_tries = 0
     last_gap = [0.0]      # newest thumb-index gap, only used to explain why a button let go
     last_sent = None      # the last cursor spot we sent, so we only send when it changes
     cursor_on = config.CONTROL_CURSOR
@@ -626,6 +643,9 @@ def main() -> None:
                 cv2.putText(frame, timing, (16, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, TEXT, 2)
                 shown = frame
             cv2.imshow(window, shown)
+            if not shape_locked and shape_tries < 60:
+                shape_tries += 1
+                shape_locked = lock_window_shape(window, *hud.size)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
