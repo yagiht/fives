@@ -31,6 +31,7 @@ import mediapipe as mp
 import config
 import gestures as g
 import hotkey
+import hud as hud_mod
 
 
 class LatestFrame:
@@ -306,8 +307,10 @@ def main() -> None:
         print("Couldn't open the camera. Check System Settings > Privacy & Security > Camera.")
         return
     # Ask for a small, fast picture. (The camera may pick the closest it supports.)
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+    cam_w, cam_h = ((config.HUD_CAMERA_WIDTH, config.HUD_CAMERA_HEIGHT) if config.HUD
+                    else (config.CAMERA_WIDTH, config.CAMERA_HEIGHT))
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, cam_w)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_h)
     camera.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)
 
     frames = LatestFrame(camera)     # keeps only the newest picture (see class above)
@@ -348,6 +351,12 @@ def main() -> None:
     elif config.DRAW_HOTKEY:
         draw_watcher = hotkey.HotkeyWatcher(config.DRAW_HOTKEY)
         draw_watcher.start()
+    hud = (hud_mod.Hud(config.HUD_WIDTH, config.HUD_HEIGHT, config.HUD_VIEW, config.HUD_GLOW,
+                       config.HUD_SCALE, config.HUD_STRENGTH, config.HUD_DENOISE) if config.HUD else None)
+    window = f"{config.NAME} eyes"
+    if hud is not None:
+        cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window, *hud.size)       # shown at layout size; drawn at HUD_SCALE x for sharpness
     last_gap = [0.0]      # newest thumb-index gap, only used to explain why a button let go
     last_sent = None      # the last cursor spot we sent, so we only send when it changes
     cursor_on = config.CONTROL_CURSOR
@@ -398,7 +407,8 @@ def main() -> None:
         set_swallow()
         scroll_anchor = None
 
-    print(f"{config.NAME} eyes online. q = quit, c = toggle cursor control.")
+    print(f"{config.NAME} eyes online. q = quit, c = toggle cursor control, h = switch view, [ ] = blue tint.")
+    print(f"Camera is giving {int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))} x {int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}.")
     try:
         while True:
             ok, frame, stamp, seq = frames.read(seq)    # 1. newest picture (and when it was taken)
@@ -406,6 +416,20 @@ def main() -> None:
                 break
             if config.MIRROR:
                 frame = cv2.flip(frame, 1)
+
+            # With the HUD the picture is big. Hand tracking gets a small 4:3 copy from the middle
+            # (the shape it always saw), and crop = (where that copy starts, how wide it is), 0..1.
+            shown_frame, crop = frame, (0.0, 1.0)
+            if hud is not None:
+                fh_, fw_ = frame.shape[:2]
+                if fw_ * 3 > fh_ * 4 + 8:                           # wider than 4:3: cut the sides
+                    cw_ = int(fh_ * 4 / 3)
+                    x0_ = (fw_ - cw_) // 2
+                    crop = (x0_ / fw_, cw_ / fw_)
+                    frame = frame[:, x0_:x0_ + cw_]
+                if frame.shape[1] > config.TRACK_WIDTH:
+                    frame = cv2.resize(frame, (config.TRACK_WIDTH, config.TRACK_WIDTH * 3 // 4),
+                                       interpolation=cv2.INTER_AREA)
 
             # 2. MediaPipe wants RGB; OpenCV gives BGR. Timestamps must only go up.
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -417,6 +441,8 @@ def main() -> None:
             pipe_ms = 0.9 * pipe_ms + 0.1 * (found - stamp) * 1000
 
             frame_time[0] = stamp
+            hud_points = hud_aim = hud_gap = None     # what the HUD shows this frame
+            hud_state, hud_progress = "", 0.0
             if toggle is not None and toggle.consume_tap() and cursor_on:
                 if mouse is None:
                     mouse = Mouse()
@@ -550,8 +576,14 @@ def main() -> None:
                     state = "PINCH" if pinch.pinched else ""
 
                 # 4. draw
-                draw_hand(frame, points)
-                draw_reticle(frame, (int(aim[0] * w), int(aim[1] * h)), state, progress)
+                if hud is not None:
+                    hud_points = [(crop[0] + x * crop[1], y) for x, y in points]    # tracked area -> whole picture
+                    hud_aim = (crop[0] + aim[0] * crop[1], aim[1])
+                    hud_gap = ratio
+                    hud_state, hud_progress = state, progress
+                else:
+                    draw_hand(frame, points)
+                    draw_reticle(frame, (int(aim[0] * w), int(aim[1] * h)), state, progress)
                 status = (state or "tracking") + f"   idx {ratio:.2f}  mid {mid_ratio:.2f}"
             else:
                 smooth.reset()
@@ -581,17 +613,29 @@ def main() -> None:
             now = time.monotonic()
             fps = 0.9 * fps + 0.1 * (1 / max(now - last, 1e-6))
             last = now
-            label = f"{status}   cursor {'ON' if cursor_on else 'off'}   {fps:.0f} fps"
-            cv2.putText(frame, label, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, TEXT, 2)
-            # detect = time MediaPipe spends finding your hand.
-            # lag    = time from the camera taking the picture to us knowing where the hand is.
-            timing = f"detect {detect_ms:.0f} ms   lag {pipe_ms:.0f} ms"
-            cv2.putText(frame, timing, (16, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, TEXT, 2)
-            cv2.imshow(f"{config.NAME} eyes", frame)
+            if hud is not None:
+                # detect = time MediaPipe spends finding your hand.
+                # lag    = time from the camera taking the picture to us knowing where the hand is.
+                info = dict(fps=fps, detect_ms=detect_ms, lag_ms=pipe_ms, cursor_on=cursor_on,
+                            draw_on=key_draw or draw_mode, gap=hud_gap)
+                shown = hud.render(shown_frame, hud_points, hud_aim, hud_state, hud_progress, info)
+            else:
+                label = f"{status}   cursor {'ON' if cursor_on else 'off'}   {fps:.0f} fps"
+                cv2.putText(frame, label, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, TEXT, 2)
+                timing = f"detect {detect_ms:.0f} ms   lag {pipe_ms:.0f} ms"
+                cv2.putText(frame, timing, (16, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, TEXT, 2)
+                shown = frame
+            cv2.imshow(window, shown)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
+            if key == ord("h") and hud is not None:
+                print("view:", "camera" if hud.toggle() == "cam" else "hand only")
+            if key == ord("t") and hud is not None:
+                print(f"hologram: {'ON' if hud.toggle_holo() > 0 else 'OFF'}")
+            if key in (ord("["), ord("]")) and hud is not None:
+                print(f"blue tint: {hud.nudge(0.1 if key == ord(']') else -0.1):.0%}")
             if key == ord("c"):
                 cursor_on = not cursor_on
                 last_sent = None

@@ -204,3 +204,21 @@ SCROLL_ACCEL = 1.0
 # slowing to a stop over roughly this many seconds. Flick, lift, flick again.
 # 0 turns the glide off. Glides too long? lower it (0.25). Stops too soon? raise it (0.6).
 SCROLL_MOMENTUM_SECONDS = 0.4
+
+# --- Eyes window look (hud.py) -------------------------------------------------
+# True = the visor HUD. False = the plain camera picture (and the settings below are ignored).
+# In the window:  H = switch camera / hand-only view,  [ and ] = less / more blue tint.
+HUD = True
+HUD_VIEW = "cam"            # "cam" = you in the viewport, "hand" = only your hand's wiring
+HUD_STRENGTH = 0.35         # blue tint: 0 = your natural colors, 1 = full blue hologram. Try 0.2 to 0.6
+HUD_WIDTH = 1280            # the window is shown this big (in points; a Retina screen has 2 pixels each)
+HUD_HEIGHT = 720
+HUD_SCALE = 2               # draw at this many times the pixels so text is sharp. 1 = faster, blurrier
+HUD_GLOW = True             # bright outlines on you in the blue tint. Turn off if the window feels slow
+HUD_DENOISE = 0.2           # 0 to 0.6: blends with the previous picture to calm camera grain. Too ghosty? lower
+# With the HUD the camera runs at this bigger size for a sharper picture. Hand tracking still sees a
+# small 4:3 copy (TRACK_WIDTH wide, cut from the middle), the same shape as before, so the feel and
+# the speed don't change. Cursor range feels different? Set HUD_CAMERA_WIDTH/HEIGHT to 640 / 480.
+HUD_CAMERA_WIDTH = 1280
+HUD_CAMERA_HEIGHT = 720
+TRACK_WIDTH = 640

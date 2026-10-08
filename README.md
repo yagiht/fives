@@ -11,7 +11,9 @@ The long-term goal is for the same hand tracking to drive a 3D-printed, gesture-
 
 ## Hand mouse: gestures
 
-Press `c` in the camera window to turn cursor control on or off. Press `q` to quit.
+Press `c` in the camera window to turn cursor control on or off. Press `h` to switch the window between the camera and a hand-only view, and `[` / `]` to turn the blue tint down or up. Press `q` to quit.
+
+The camera window is a visor-style HUD (`hud.py`): an angled helmet frame with the camera in a viewport in the middle (natural colors with a cool blue tint, drawn at double resolution so text is sharp), your hand's wiring, a bracket on the cursor spot, the current mode, pinch gap, and live fps/lag readouts. Set `HUD = False` in `config.py` for the plain camera picture. Tuning: `HUD_STRENGTH` (blue tint), `HUD_SCALE` (1 = faster, 2 = sharper), `HUD_DENOISE`, `HUD_GLOW`.
 
 | Gesture | What it does |
 | --- | --- |
@@ -78,9 +80,10 @@ Everything adjustable is in `config.py`, with a comment next to each setting say
 
 | File | Purpose |
 | --- | --- |
-| `eyes.py` | Webcam loop, drawing, and mouse control |
+| `eyes.py` | Webcam loop and mouse control |
+| `hud.py` | The visor HUD drawn in the camera window (camera and hand-only views) |
 | `gestures.py` | Hand geometry and logic: pinch, smoothing, click, drag, and scroll. No camera code, so it stays testable |
-| `hotkey.py` | Global key listener for the scroll hotkey |
+| `hotkey.py` | Global key listener for the scroll and draw hotkeys (and hiding the pen key) |
 | `config.py` | All settings and the personality |
 | `tools.py` | What FIVES can do on the Mac |
 | `brain.py` | The agent loop (Ollama chat + tool calls) |
