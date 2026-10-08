@@ -264,6 +264,7 @@ class ClickEngine:
         self.moved = False           # we are dragging (moved past the dead zone)
         self.press_pos = None        # where the pinch landed (already corrected for the finger dip)
         self.start_tip = None        # where the hand (knuckles) was when the pinch began
+        self.anchor_tip = None       # where the knuckles were at the moment of `rewound` (for the cursor math)
         self.start_t = 0.0
         self.cursor = None           # last cursor position we asked for
         self.open_since = None       # when the pinch opened during a drag (flicker guard)
@@ -292,18 +293,21 @@ class ClickEngine:
         if self.state == "down" and self.open_since is not None:
             return self.cursor                         # pinch is opening: hold still
         if self.state == "down" and self.moved:
-            self.cursor = (self.press_pos[0] + tip[0] - self.start_tip[0],
-                           self.press_pos[1] + tip[1] - self.start_tip[1])
+            ref = self.anchor_tip or self.start_tip
+            self.cursor = (self.press_pos[0] + tip[0] - ref[0],
+                           self.press_pos[1] + tip[1] - ref[1])
         else:
             self.cursor = self.press_pos
         return self.cursor
 
     # -- the per-frame brain --------------------------------------------------
-    def update(self, t, pinched, tip, rewound, right_intent):
+    def update(self, t, pinched, tip, rewound, right_intent, palm_rewound=None):
         """t = time (s). pinched = thumb+index pinch. tip = a STEADY point on the
         hand (we pass the knuckles: the fingertip dips when you pinch, knuckles
         don't), used to tell if you moved. rewound = where the fingertip was just
         before the dip. right_intent = middle finger is on the thumb too.
+        palm_rewound = where the knuckles were at that same earlier moment, so the
+        cursor stays under your fingertip even if your hand was moving as you pinched.
         Returns a list of actions."""
         self.lost_since = None
         actions = []
@@ -311,6 +315,7 @@ class ClickEngine:
         if self.state == "idle" and pinched:
             self.state = "pending"
             self.start_t, self.start_tip = t, tip
+            self.anchor_tip = palm_rewound or tip
             self.press_pos = rewound or tip
             self.right = self.moved = False
             self.right_count = 0
@@ -388,6 +393,190 @@ class ClickEngine:
             pos = last[1]            # same spot as before, or the Mac won't see a double-click
         self.last_click = (t, pos, count)
         return ("click", pos, count)
+
+
+class DrawPen:
+    """DRAW MODE: pinch = pen down RIGHT AWAY, let go = pen up. For sketch pads.
+
+    Different from ClickEngine, which waits to see whether you mean click or drag:
+      - the button goes down the instant you pinch (no waiting, no distance to move first),
+        so every stroke starts exactly where you pinched
+      - the pen follows your KNUCKLES plus a fixed offset to your fingertip, measured
+        BEFORE the pinch dip, so the line never wobbles when your finger dips
+      - NO TAIL: as soon as your thumb and finger start to open (the gap grows a little
+        past its tightest), the pen STOPS MOVING, so the drift of opening your hand is
+        never drawn. The pen only lifts once the gap is clearly open (that's the pinch
+        detector's job), so a wobbly pinch while you move never drops the line.
+    Each frame update() returns actions: ("down", pos) / ("up", pos). Positions are camera 0..1.
+    """
+
+    def __init__(self, lift_guard, lost_release):
+        self.lift_guard = lift_guard
+        self.lost_release = lost_release
+        self.reset()
+
+    def reset(self):
+        """Pen up. Returns the actions needed to let go."""
+        actions = [("up", self.pos)] if getattr(self, "down", False) else []
+        self.down = False
+        self.pos = None
+        self.offset = (0.0, 0.0)
+        self.low = 1.0
+        self.avg = 1.0
+        self.lost_since = None
+        return actions
+
+    def aim(self):
+        return self.pos if self.down else None
+
+    def update(self, t, pinched, ratio, palm, tip_rewound, palm_rewound):
+        self.lost_since = None
+        actions = []
+        if pinched and not self.down:
+            self.down = True
+            self.low = self.avg = ratio
+            # fingertip minus knuckles, taken from just BEFORE the finger dipped
+            self.offset = (tip_rewound[0] - palm_rewound[0], tip_rewound[1] - palm_rewound[1])
+            self.pos = (palm[0] + self.offset[0], palm[1] + self.offset[1])
+            actions.append(("down", self.pos))
+        elif pinched and self.down:
+            self.avg = 0.5 * self.avg + 0.5 * ratio        # smoothed, so one noisy frame doesn't stall the pen
+            self.low = min(self.low, self.avg)
+            if self.avg <= self.low + self.lift_guard:     # still closed: follow the hand
+                self.pos = (palm[0] + self.offset[0], palm[1] + self.offset[1])
+        elif not pinched and self.down:
+            self.down = False
+            actions.append(("up", self.pos))
+        return actions
+
+    def lost(self, t):
+        """Call each frame the hand is NOT visible. Lifts the pen if it stays gone."""
+        if not self.down:
+            return []
+        if self.lost_since is None:
+            self.lost_since = t
+        if t - self.lost_since >= self.lost_release:
+            return self.reset()
+        return []
+
+
+class KeyPen:
+    """KEY DRAW MODE: the pen is a key you hold. The hand only POINTS.
+
+    Like a graphics tablet / mouse: the cursor moves RELATIVE to your hand and never jumps.
+      - pen key up   : the cursor follows your hand at normal speed
+      - pen key down : ink is down and the cursor moves `gain` times as far (0.5 = half speed),
+                       which cuts jitter and tremor by the same amount
+      - letting go   : the cursor just stays where it is and keeps following your hand from there
+    So the cursor can end up offset from your fingertip; that is fine (like lifting a mouse).
+    update() returns actions: ("down", pos) / ("up", pos). Positions are camera 0..1.
+    """
+
+    def __init__(self, gain, lost_release, resync_seconds=0.0):
+        self.gain = gain
+        self.lost_release = lost_release
+        self.resync_seconds = resync_seconds    # pen up: cursor drifts back under your fingertip over about this long
+        self.down = False
+        self.last_t = None
+        self.pos = None          # where the cursor is (camera 0..1)
+        self.prev = None         # where the hand was last frame
+        self.lost_since = None
+
+    def reset(self):
+        """Pen up (cursor stays put). Returns the actions needed to let go."""
+        actions = [("up", self.pos)] if self.down else []
+        self.down = False
+        self.lost_since = None
+        return actions
+
+    def resync(self):
+        """Forget the offset: next frame the cursor goes back to the fingertip."""
+        actions = self.reset()
+        self.pos = self.prev = None
+        return actions
+
+    def hand_gone(self):
+        """The hand left the picture: when it comes back, carry on from the cursor's spot."""
+        self.prev = None
+        self.last_t = None
+
+    def aim(self):
+        return self.pos
+
+    def update(self, t, key_down, hand):
+        """hand = where your fingertip is (smoothed). key_down = the pen key is held."""
+        self.lost_since = None
+        actions = []
+        if self.pos is None:
+            self.pos = hand
+        if self.prev is not None:
+            k = self.gain if self.down or key_down else 1.0
+            self.pos = (min(1.0, max(0.0, self.pos[0] + k * (hand[0] - self.prev[0]))),
+                        min(1.0, max(0.0, self.pos[1] + k * (hand[1] - self.prev[1]))))
+        if not key_down and not self.down and self.resync_seconds > 0 and self.last_t is not None:
+            a = 1 - math.exp(-(t - self.last_t) / self.resync_seconds)      # pen up: ease back under the fingertip
+            self.pos = (self.pos[0] + a * (hand[0] - self.pos[0]), self.pos[1] + a * (hand[1] - self.pos[1]))
+        self.last_t = t
+        self.prev = hand
+        if key_down and not self.down:
+            self.down = True
+            actions.append(("down", self.pos))
+        elif not key_down and self.down:
+            self.down = False
+            actions.append(("up", self.pos))
+        return actions
+
+    def lost(self, t):
+        """Call each frame the hand is NOT visible. Lifts the pen if it stays gone."""
+        self.hand_gone()
+        if not self.down:
+            return []
+        if self.lost_since is None:
+            self.lost_since = t
+        if t - self.lost_since >= self.lost_release:
+            return self.reset()
+        return []
+
+
+class ReleaseSettle:
+    """After you let go of a drag, don't snap the cursor to your fingertip.
+
+    The fingertip moves a lot while your fingers open (it rises back up after the pinch
+    dip). So the cursor first stays where you dropped things for `freeze` seconds, then
+    glides to your fingertip over `blend` seconds. No jump.
+    """
+
+    def __init__(self, freeze, blend):
+        self.freeze = freeze
+        self.blend = blend
+        self.active = False
+        self.reported = False
+        self.pos = None
+        self.t0 = 0.0
+
+    def start(self, t, pos):
+        self.active = (self.freeze + self.blend) > 0
+        self.reported = False
+        self.pos = pos
+        self.t0 = t
+
+    def cancel(self):
+        self.active = False
+
+    def apply(self, t, target):
+        """The position the cursor should use now (target = your fingertip)."""
+        if not self.active:
+            return target
+        elapsed = t - self.t0
+        if elapsed < self.freeze:
+            return self.pos
+        if elapsed < self.freeze + self.blend:
+            f = (elapsed - self.freeze) / self.blend
+            f = f * f * (3 - 2 * f)                        # ease in and out
+            return (self.pos[0] + (target[0] - self.pos[0]) * f,
+                    self.pos[1] + (target[1] - self.pos[1]) * f)
+        self.active = False
+        return target
 
 
 class ScrollTracker:

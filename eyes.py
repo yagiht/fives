@@ -16,6 +16,8 @@ Gestures in cursor mode:
   pinch with thumb + index + middle      right click
   SCROLL MODE (hold Cmd+Shift):
       pinch, move your hand up/down  scroll   (let go while moving: it glides)
+  DRAW MODE (hold Cmd+Option):
+      pinch = pen down at once, let go = pen up (no tail). For sketch pads.
 """
 
 import threading
@@ -97,6 +99,7 @@ class Mouse:
             self.q = Quartz
         except ImportError:
             self.q = None
+        self.strip_flags = False     # True in scroll/draw mode: hide the held hotkey from apps
         # With Quartz we check the corners ourselves; otherwise pyautogui does.
         pyautogui.FAILSAFE = self.q is None
 
@@ -113,6 +116,8 @@ class Mouse:
         event = q.CGEventCreateMouseEvent(None, kind, (x, y), button)
         if count:
             q.CGEventSetIntegerValueField(event, q.kCGMouseEventClickState, count)
+        if self.strip_flags and hasattr(q, "CGEventSetFlags"):
+            q.CGEventSetFlags(event, 0)      # apps see a plain mouse, not Cmd/Option held
         q.CGEventPost(q.kCGHIDEventTap, event)
 
     def _goto(self, x, y) -> None:
@@ -251,10 +256,19 @@ def draw_reticle(frame, center, state: str, progress: float) -> None:
       DRAG     same, plus an outer ring so you can see you're carrying something
       RIGHT    a second ring appears (right click armed)
       SCROLL   up and down arrows (ring solid while your pinch is touching)
+      DRAW     pen up: a small ring and dot.  DRAWING: pen down, solid dot and bright ring
     """
     cx, cy = center
     c = (cx, cy)
     R = 18
+    if state in ("DRAW", "DRAWING"):
+        if state == "DRAWING":                 # pen down: solid dot and a bright ring
+            cv2.circle(frame, c, 11, BLUE, 2, cv2.LINE_AA)
+            cv2.circle(frame, c, 5, BLUE, -1, cv2.LINE_AA)
+        else:                                  # pen up: a small ring and a dot
+            cv2.circle(frame, c, 10, BLUE, 1, cv2.LINE_AA)
+            cv2.circle(frame, c, 2, BLUE_PALE, -1, cv2.LINE_AA)
+        return
     if state in ("SCROLL", "SCROLLING"):
         cv2.circle(frame, c, R, BLUE if state == "SCROLLING" else BLUE_DIM,
                    2 if state == "SCROLLING" else 1, cv2.LINE_AA)
@@ -304,6 +318,7 @@ def main() -> None:
     smooth = g.OneEuroFilter(config.MIN_CUTOFF, config.BETA)
     palm_smooth = g.OneEuroFilter(config.MIN_CUTOFF, config.BETA)   # same, for the knuckles
     history = g.PositionHistory()
+    palm_history = g.PositionHistory()      # where the knuckles were (for the draw pen)
     engine = g.ClickEngine(config.DRAG_DISTANCE, config.HOLD_TO_PRESS_SECONDS,
                            config.RELEASE_GRACE_SECONDS, config.LOST_HAND_RELEASE_SECONDS,
                            config.DOUBLE_CLICK_SECONDS, config.DOUBLE_CLICK_DISTANCE,
@@ -313,10 +328,26 @@ def main() -> None:
                                config.SCROLL_ACCEL, config.SCROLL_MOMENTUM_SECONDS)
     scroll_mode = False       # scroll mode is on right now (while you hold the hotkey)
     scroll_anchor = None     # where the cursor stays parked while scroll mode is on
-    watcher = None
+    pen = g.DrawPen(config.DRAW_LIFT_GUARD, config.LOST_HAND_RELEASE_SECONDS)
+    settle = g.ReleaseSettle(config.DRAG_SETTLE_SECONDS, config.DRAG_SETTLE_BLEND)
+    draw_mode = False         # draw mode is on right now (while you hold its hotkey)
+    frame_time = [0.0]        # the time of the picture being processed (perform() reads it)
+    keypen = g.KeyPen(config.DRAW_GAIN, config.LOST_HAND_RELEASE_SECONDS, config.DRAW_RESYNC_SECONDS)
+    draw_smooth = g.OneEuroFilter(config.DRAW_MIN_CUTOFF, config.DRAW_BETA)   # extra-calm fingertip for drawing
+    key_draw = False          # key draw mode is on (toggled by tapping its hotkey)
+    use_key_pen = config.DRAW_PEN == "key"
+    watcher = draw_watcher = toggle = pen_key = None
     if config.SCROLL_HOTKEY:
         watcher = hotkey.HotkeyWatcher(config.SCROLL_HOTKEY)
         watcher.start()
+    if use_key_pen:
+        toggle = hotkey.HotkeyWatcher(config.DRAW_TOGGLE_HOTKEY)
+        toggle.start()
+        pen_key = hotkey.HotkeyWatcher([config.DRAW_PEN_KEY])
+        pen_key.start()
+    elif config.DRAW_HOTKEY:
+        draw_watcher = hotkey.HotkeyWatcher(config.DRAW_HOTKEY)
+        draw_watcher.start()
     last_gap = [0.0]      # newest thumb-index gap, only used to explain why a button let go
     last_sent = None      # the last cursor spot we sent, so we only send when it changes
     cursor_on = config.CONTROL_CURSOR
@@ -346,14 +377,25 @@ def main() -> None:
             elif kind == "up":
                 mouse.up(x, y)
                 print(f"button up   (thumb-index gap {last_gap[0]:.2f})")
+                settle.start(frame_time[0], act[1])     # don't snap the cursor to the fingertip
+
+    def set_swallow() -> None:
+        """While key draw mode is on, hide the pen key from other apps; otherwise let it through."""
+        if use_key_pen and config.DRAW_SWALLOW_PEN_KEY and hasattr(hotkey.HotkeyWatcher, "set_swallow"):
+            hotkey.HotkeyWatcher.set_swallow([config.DRAW_PEN_KEY] if key_draw else [])
 
     def release_everything() -> None:
         """Let go of the button and stop any scroll. Safe to call any time."""
-        nonlocal scroll_mode, scroll_anchor
+        nonlocal scroll_mode, scroll_anchor, draw_mode, key_draw
         if mouse is not None:
             perform(engine.reset())
+            perform(pen.reset())
+            perform(keypen.resync())
+            mouse.strip_flags = False
         scroller.cancel()
-        scroll_mode = False
+        settle.cancel()
+        scroll_mode = draw_mode = key_draw = False
+        set_swallow()
         scroll_anchor = None
 
     print(f"{config.NAME} eyes online. q = quit, c = toggle cursor control.")
@@ -374,6 +416,20 @@ def main() -> None:
             detect_ms = 0.9 * detect_ms + 0.1 * (found - started) * 1000
             pipe_ms = 0.9 * pipe_ms + 0.1 * (found - stamp) * 1000
 
+            frame_time[0] = stamp
+            if toggle is not None and toggle.consume_tap() and cursor_on:
+                if mouse is None:
+                    mouse = Mouse()
+                key_draw = not key_draw
+                set_swallow()
+                if key_draw:
+                    keypen.resync()
+                    print(f"draw mode ON  (hold {config.DRAW_PEN_KEY} to draw, tap {'+'.join(config.DRAW_TOGGLE_HOTKEY)} to leave)")
+                else:
+                    print("draw mode OFF")
+                    perform(keypen.resync())
+                    pinch.pinched = False       # a pinch held across the switch isn't a click
+                    pinch.armed = False
             status = "no hand"
             if result.hand_landmarks:
                 hand = result.hand_landmarks[0]         # first hand found
@@ -389,13 +445,20 @@ def main() -> None:
                 knuckles = ((points[g.INDEX_KNUCKLE][0] + points[g.MIDDLE_KNUCKLE][0]) / 2,
                             (points[g.INDEX_KNUCKLE][1] + points[g.MIDDLE_KNUCKLE][1]) / 2)
                 palm = palm_smooth.update(*knuckles, t)
+                palm_history.add(t, *palm)
                 ratio = g.pinch_ratio(points)           # thumb <-> index gap
                 last_gap[0] = ratio
+                draw_tip = draw_smooth.update(*points[g.INDEX_TIP], t)    # calmer fingertip for key drawing
                 mid_ratio = g.middle_ratio(points)      # thumb <-> middle gap
                 # Dragging, or scrolling with your pinch held, gets a forgiving grip.
-                pinch.update(ratio, holding=engine.state == "down" or (scroll_mode and scroller.active))
+                # While drawing, the pen holds on until the pinch is clearly open (DRAW_HOLD_END);
+                # the tail is cut by the pen stopping early (DrawPen), not by lifting early.
+                pinch.hold_end = config.DRAW_HOLD_END if draw_mode else config.PINCH_DRAG_END
+                pinch.update(ratio, holding=(engine.state == "down" or pen.down
+                                             or (scroll_mode and scroller.active)))
                 # Where were you pointing just BEFORE your finger dipped to pinch?
                 rewound = history.seconds_ago(config.REWIND_SECONDS, t) or tip
+                palm_rewound = palm_history.seconds_ago(config.REWIND_SECONDS, t) or palm
 
                 aim = tip                               # where the ring (and cursor) goes
                 state = ""                              # what to show: PINCH, DRAG, SCROLL...
@@ -404,14 +467,30 @@ def main() -> None:
                     if mouse is None:
                         mouse = Mouse()                 # only loaded if you use it
 
-                    # Scroll mode is ON while the hotkey is held.
+                    # Scroll mode is ON while its hotkey is held; draw mode while ITS hotkey is held.
+                    # (If you hold both, scroll wins.)
                     wanted = watcher is not None and watcher.down
-                    if wanted and not scroll_mode and engine.state == "idle" and not pinch.pinched:
+                    draw_wanted = draw_watcher is not None and draw_watcher.down and not wanted
+                    if (draw_wanted and not draw_mode and not scroll_mode
+                            and engine.state == "idle" and not pinch.pinched):
+                        draw_mode = True                        # (never starts in the middle of a click)
+                    elif draw_mode and not draw_wanted:
+                        draw_mode = False
+                        perform(pen.reset())                    # lift the pen
+                        if pinch.pinched:                       # still pinching: don't turn that into a click
+                            pinch.pinched = False
+                            pinch.armed = False
+                    if key_draw and wanted:
+                        perform(keypen.reset())                 # scroll wins: lift the pen
+                        keypen.hand_gone()
+                    mouse.strip_flags = scroll_mode or draw_mode or key_draw
+                    if wanted and not scroll_mode and not draw_mode and engine.state == "idle" and (key_draw or not pinch.pinched):
                         scroll_mode = True                      # (never starts in the middle of a click)
                         scroll_anchor = rewound                 # the cursor parks here
                     elif scroll_mode and not wanted:
                         scroll_mode = False
                         scroll_anchor = None
+                        mouse.strip_flags = draw_mode or key_draw
                         if pinch.pinched:                       # still pinching: don't turn that into a click
                             pinch.pinched = False
                             pinch.armed = False
@@ -427,20 +506,42 @@ def main() -> None:
 
                     if scroll_mode:
                         aim, state = scroll_anchor, "SCROLLING" if touching else "SCROLL"
+                    elif key_draw:
+                        # Key drawing: your hand only points; holding the pen key puts ink down.
+                        perform(keypen.update(t, pen_key.down and not wanted, draw_tip))
+                        aim = keypen.aim() or draw_tip
+                        state = "DRAWING" if keypen.down else "DRAW"
+                    elif draw_mode:
+                        # Drawing: the pen goes down the instant you pinch and follows your knuckles.
+                        pen_tip = history.seconds_ago(config.DRAW_REWIND_SECONDS, t) or tip
+                        draw_palm = palm_history.seconds_ago(config.DRAW_REWIND_SECONDS, t) or palm
+                        perform(pen.update(t, pinch.pinched, ratio, palm, pen_tip, draw_palm))
+                        aim = pen.aim() or tip
+                        state = "DRAWING" if pen.down else "DRAW"
                     else:
                         # Clicking and dragging (the engine decides what a pinch means).
                         perform(engine.update(t, pinch.pinched, palm, rewound,
-                                              pinch.pinched and mid_ratio < config.RIGHT_CLICK_GAP))
+                                              pinch.pinched and mid_ratio < config.RIGHT_CLICK_GAP,
+                                              palm_rewound))
                         aim = engine.aim(palm) or tip
                         state = engine.label
                         progress = engine.hold_progress(t)
+
+                    # Just let go of a drag or the pen? Ease the cursor over to your fingertip.
+                    if not scroll_mode and engine.state == "idle" and not pen.down and not key_draw:
+                        if settle.active and not settle.reported:
+                            settle.reported = True
+                            print(f"released: your fingertip is {g.distance(settle.pos, aim) * mouse.screen_w:.0f} px from the drop point")
+                        aim = settle.apply(t, aim)
+                    else:
+                        settle.cancel()
 
                     if mouse.brake_hit():
                         print("Emergency brake: the mouse hit a screen corner. Stopping.")
                         break
                     sx, sy = to_px(aim)
                     if (sx, sy) != last_sent:           # a real mouse is silent when it's still
-                        if engine.state == "down":
+                        if engine.state == "down" or pen.down or keypen.down:
                             mouse.drag(sx, sy)
                         else:
                             mouse.move(sx, sy)
@@ -455,7 +556,9 @@ def main() -> None:
             else:
                 smooth.reset()
                 palm_smooth.reset()
+                draw_smooth.reset()
                 history.clear()
+                palm_history.clear()
                 pixels = scroller.update(stamp, False, 0.0)    # a glide keeps going without the hand
                 if pixels and cursor_on and mouse is not None:
                     mouse.scroll(pixels)
@@ -465,6 +568,13 @@ def main() -> None:
                 last_sent = None
                 if cursor_on and mouse is not None:
                     perform(engine.lost(stamp))         # lets go if the hand stays gone
+                    perform(pen.lost(stamp))
+                    perform(keypen.lost(stamp))
+                if draw_mode and not (draw_watcher is not None and draw_watcher.down):
+                    draw_mode = False
+                    perform(pen.reset())
+                    if mouse is not None:
+                        mouse.strip_flags = scroll_mode
                 if engine.state == "idle":
                     pinch.pinched = False
 
@@ -491,6 +601,9 @@ def main() -> None:
         release_everything()        # never leave the mouse button stuck down
         if watcher is not None:
             watcher.stop()
+        for w in (draw_watcher, toggle, pen_key):
+            if w is not None:
+                w.stop()
         frames.close()
         camera.release()
         cv2.destroyAllWindows()

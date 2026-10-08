@@ -142,6 +142,50 @@ DOUBLE_CLICK_DISTANCE = 0.03
 RIGHT_CLICK_GAP = 0.20
 RIGHT_CLICK_FRAMES = 3
 
+# LETTING GO OF A DRAG: the cursor stays where you dropped things for this long, then
+# glides to your fingertip, so it doesn't jump when your fingers open. Still jumps? raise
+# the first one (0.25). Feels sluggish after a drag? lower them (0.08 / 0.1). 0 = off.
+DRAG_SETTLE_SECONDS = 0.15
+DRAG_SETTLE_BLEND = 0.15
+
+# DRAW MODE (for sketch pads and drawing). Two ways to put ink down:
+#   "key"   TAP DRAW_TOGGLE_HOTKEY to turn draw mode on (tap again to turn it off). Then your
+#           hand only POINTS, and you HOLD DRAW_PEN_KEY to put ink down, like a graphics tablet.
+#           Letting go of the key lifts the pen instantly. Clicking still works: tap the pen key.
+#           (Best for precision. Pinch, drag and scroll-by-pinch are off while draw mode is on.)
+#   "pinch" HOLD DRAW_HOTKEY, then pinch = ink down, let go = ink up (settings further below).
+DRAW_PEN = "key"
+DRAW_TOGGLE_HOTKEY = ["cmd", "esc"]     # tap these together (Cmd + Escape)
+DRAW_PEN_KEY = "alt"                    # any of "space", "cmd", "shift", "ctrl", "alt". If the
+                                        # drawing site reacts to Space, try "ctrl".
+# While the pen is down, your hand moves the cursor this fraction as far. 1 = same as normal,
+# 0.5 = half as far (steadier, but you move more). Lift the pen to reposition. Too shaky? lower it.
+DRAW_GAIN = 0.5
+# Extra smoothing for the pen. Lower MIN_CUTOFF = steadier lines but a little lag; higher BETA =
+# less lag on fast strokes. (Normal cursor: 1.5 and 8.0.)
+DRAW_MIN_CUTOFF = 2.5
+DRAW_BETA = 12.0
+# Pen up: the cursor drifts back under your fingertip over about this many seconds (0 = never;
+# it then stays wherever the last stroke left it). Smooth, never a jump.
+DRAW_RESYNC_SECONDS = 0.5
+# Hide the pen key from other apps while draw mode is on, so the page never sees it
+# (stops sketch.io making a selection box when Option is held). Needs Accessibility permission.
+DRAW_SWALLOW_PEN_KEY = True
+
+# "pinch" draw mode only: hold this, then pinch = ink down. Cmd + Option by default.
+# (Same key names as SCROLL_HOTKEY below. Set to [] to turn it off.)
+DRAW_HOTKEY = ["cmd", "alt"]
+# Where the stroke starts: your fingertip as it was this many seconds BEFORE the pinch dip.
+DRAW_REWIND_SECONDS = 0.12
+# Drawing holds on through a wobbly pinch: the pen lifts only when your thumb and finger are
+# clearly apart (this gap, as a fraction of hand size). Pen drops while you draw? raise it
+# (0.40). Pen lifts too slowly at the end of a stroke? lower it (0.28).
+DRAW_HOLD_END = 0.35
+# The pen STOPS following your hand once the pinch opens this much past its tightest,
+# which cuts off the tail (it only lifts later, at DRAW_HOLD_END). Tail still there? lower it
+# (0.035). The line stalls or stutters mid-stroke? raise it (0.07).
+DRAW_LIFT_GUARD = 0.05
+
 # SCROLL MODE: while you HOLD the hotkey below, your index pinch becomes a "finger on the
 # screen": pinch, move your hand up/down and the page follows, let go and a flick keeps
 # gliding. The cursor freezes in place and clicking is paused; let go of the keys and

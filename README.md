@@ -1,64 +1,95 @@
-# calendar-goog-link
+# FIVES
 
-## Project Overview
-This project is a static HTML/CSS/JavaScript website designed for GitHub Pages that integrates directly with Google Calendar using the Google Calendar API. Sign-in uses **Google Identity Services (GIS)** — the current, supported OAuth library. (An earlier version of this project used `gapi.auth2`, which Google has deprecated; that's why sign-in never actually worked before.)
+A personal assistant for my Mac, in the spirit of Jarvis and Friday. This project has two parts:
 
-## File Structure
-```
-calendar-goog-link
-├── index.html
-├── style.css
-├── script.js
-└── README.md
-```
+- **Eyes** (`eyes.py`): the webcam watches my hand and turns it into a mouse. Point to move, pinch to click, drag, scroll.
+- **Brain** (`main.py`): a chat front end for a local language model (run through [Ollama](https://ollama.com)) that can use tools on the Mac.
 
-## Setup Instructions
+The long-term goal is for the same hand tracking to drive a 3D-printed, gesture-controlled robotic hand (501st Legion clone trooper style).
 
-### Enabling Google Calendar API
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project or select an existing project.
-3. Navigate to the "APIs & Services" > "Library" section.
-4. Search for "Google Calendar API" and enable it for your project.
-5. Go to "APIs & Services" > "Credentials".
-6. Click "Create Credentials" and select "OAuth client ID".
-7. Configure the OAuth consent screen if prompted (External is fine for personal use; add your own Google account as a test user if the app stays in "Testing" mode).
-8. Set the application type to "Web application".
-9. Add the following Authorized JavaScript origins:
-   - `https://yagiht.github.io`
-   - `http://localhost:PORT` (optional, for local testing — pick any port you serve the site on)
-10. You do **not** need to set an Authorized redirect URI — Google Identity Services' token flow used here doesn't redirect.
-11. After creating the credentials, copy the `Client ID` (looks like `xxxxx.apps.googleusercontent.com`).
+> Work in progress. Built as a learning project, one feature at a time.
 
-### Adding CLIENT_ID in script.js
-Open `script.js` and set the `CLIENT_ID` constant near the top:
-```javascript
-const CLIENT_ID = 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com';
-```
+## Hand mouse: gestures
 
-### Deployment on GitHub Pages
-1. Push your code to a GitHub repository named `calendar-goog-link`.
-2. Go to the repository's Settings > Pages.
-3. Select the branch to deploy (usually `main`).
-4. Save. Your site will be published at `https://yagiht.github.io/calendar-goog-link/`.
-5. Make sure that exact URL's origin (`https://yagiht.github.io`) is listed under Authorized JavaScript origins in step 9 above — a mismatch here is the most common reason sign-in fails.
+Press `c` in the camera window to turn cursor control on or off. Press `q` to quit.
 
-### Testing locally
-Because this uses OAuth, you can't just open `index.html` as a `file://` URL — serve it over http(s), e.g.:
+| Gesture | What it does |
+| --- | --- |
+| Point with your index finger | Move the cursor |
+| Pinch (thumb + index), then let go | Click. Click twice quickly for a double-click, three times for a triple-click |
+| Pinch, then move your hand | Drag (windows, Chrome tabs, text) |
+| Pinch and hold still for 0.4 s | Press and hold |
+| Pinch with thumb + index + middle | Right click |
+| Hold **Cmd + Shift**, then pinch and move your hand up or down | Scroll. Let go of the pinch while moving and the page keeps gliding |
+| Tap **Cmd + Escape** | Toggle draw mode on/off. Your hand only points; **hold either Option key** to put ink down, let go to lift. Pinching does nothing in this mode. For sketch pads and drawing apps |
+
+While you hold Cmd + Shift, the cursor stays where it was and clicking is paused. In draw mode the pen follows your hand at half speed (`DRAW_GAIN`) through an extra smoothing filter, so small precise strokes are easier; lift, move and press again to go farther. Tap Option for a dot. Hotkeys work from any app and are set in `config.py` (`SCROLL_HOTKEY`, `DRAW_TOGGLE_HOTKEY`, `DRAW_PEN_KEY`). Set `DRAW_PEN = "pinch"` for the older pinch pen (hold Cmd + Option, then pinch).
+
+Tips:
+- Good, even light helps a lot.
+- A pinch is easier for the camera to see from the side than head-on. Turn your hand slightly toward the camera's side.
+- Slam the cursor into a screen corner to stop everything (emergency brake).
+
+## Setup
+
+Requires macOS and Python 3.12.
+
 ```bash
-python3 -m http.server 8000
+git clone https://github.com/yagiht/fives.git
+cd fives
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python eyes.py
 ```
-then visit `http://localhost:8000`, having added that origin to the OAuth client as described above.
 
-## Functionality
-- Users click "Sign in with Google" to authorize the app for calendar access (via Google Identity Services).
-- Once signed in, "Add To-Do to Calendar" opens a modal to enter a title, urgency, and date/time.
-- Submitting the form creates an event in the user's primary Google Calendar.
-- "Sign out" revokes the current session token.
+The hand-tracking model (a few MB) downloads automatically the first time you run `eyes.py`.
 
-## Troubleshooting
-- **Nothing happens when clicking "Add To-Do to Calendar"**: that button is disabled until you're signed in.
-- **Sign-in popup closes immediately / errors**: double-check the Authorized JavaScript origin exactly matches the page's origin (protocol + domain, no trailing path), and that the OAuth consent screen has your Google account added as a test user if it's still in "Testing" status.
-- **Console shows a 403 from the Calendar API**: the Google Calendar API likely isn't enabled on the Cloud project tied to your Client ID.
+macOS will ask for permissions. Allow them for Terminal (or whichever app you run Python from):
 
-## Acknowledgments
-This project utilizes the Google Calendar API and the gapi JavaScript client library, together with Google Identity Services for authentication.
+- **Camera**: so FIVES can see your hand
+- **Accessibility**: so it can move the mouse and click
+- **Input Monitoring**: so it can notice the Cmd + Shift scroll hotkey from any app
+
+(System Settings > Privacy & Security). Restart the program after changing a permission.
+
+## The brain (optional)
+
+```bash
+ollama pull qwen3.6:35b      # one time, about 23 GB
+python main.py               # type requests; it picks a tool or answers
+```
+
+The model and personality are set in `config.py`.
+
+## Tuning
+
+Everything adjustable is in `config.py`, with a comment next to each setting saying what to change if something feels off. Common ones:
+
+- `PINCH_START` / `PINCH_END`: how close your fingers must be to count as a pinch
+- `DRAG_DISTANCE`: how far your hand moves before a pinch becomes a drag
+- `HOLD_TO_PRESS_SECONDS`: the press-and-hold delay
+- `SCROLL_HOTKEY`, `SCROLL_GAIN`, `SCROLL_DIRECTION`: scroll mode (use `-1` for direction if it feels backwards)
+- `DRAW_PEN`, `DRAW_TOGGLE_HOTKEY`, `DRAW_PEN_KEY`, `DRAW_GAIN`, `DRAW_MIN_CUTOFF`, `DRAW_BETA`: key draw mode (`DRAW_HOTKEY`, `DRAW_HOLD_END`, `DRAW_LIFT_GUARD` are for the pinch pen)
+- `DRAG_SETTLE_SECONDS`: how long the cursor holds still after you let go of a drag
+- `MIN_CUTOFF` / `BETA`: cursor smoothing (steadier vs. snappier)
+
+## Project layout
+
+| File | Purpose |
+| --- | --- |
+| `eyes.py` | Webcam loop, drawing, and mouse control |
+| `gestures.py` | Hand geometry and logic: pinch, smoothing, click, drag, and scroll. No camera code, so it stays testable |
+| `hotkey.py` | Global key listener for the scroll hotkey |
+| `config.py` | All settings and the personality |
+| `tools.py` | What FIVES can do on the Mac |
+| `brain.py` | The agent loop (Ollama chat + tool calls) |
+| `main.py` | Typed chat front end |
+
+## Roadmap
+
+- [x] Hand-tracked cursor: move, click, double-click, drag, right click, scroll
+- [ ] Minimalist on-screen HUD
+- [ ] Volume dial and keyboard shortcuts that run tools, with no model needed
+- [ ] Voice commands
+- [ ] Drive a 3D-printed robotic hand from the same hand tracking
