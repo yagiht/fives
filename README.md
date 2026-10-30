@@ -1,6 +1,8 @@
 # FIVES
 
- <img width="304" height="198" alt="Adobe Express - Screen Recording 2026-10-30 at 12 33 37 AM (1)" src="https://github.com/user-attachments/assets/ccc84dbb-cf2a-4f3d-9f22-1399c461976c" />
+ <img width="304" height="198" alt="Adobe Express - Screen Recording 2026-10-30 at 12 33 37 AM (1)" src="https://github.com/user-attachments/assets/11224a25-423a-45d7-9b73-05a137c12038" />
+
+
 
 A personal assistant for iMac, an attempt to make a futuristic workflow that replaces keyboard and mouse with your hands. This project has two parts:
 
