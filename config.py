@@ -276,10 +276,6 @@ SKETCH_AUTOSAVE = True                      # save the marked-up copy whenever y
 SKETCH_SMOOTH_PASSES = 2                    # how much a finished stroke is smoothed (0 = none, 5 = very calm)
 SKETCH_LIVE_FOLLOW = 0.6                    # 1 = ink goes exactly where you point; lower = calmer while drawing
 
-# ---- POINTER ACCELERATION ---------------------------------------------------------------------
-# Like a trackpad: move your hand slowly and the cursor moves LESS (precise aiming); flick it
-# quickly and the cursor moves MORE (cross the screen with a small motion). The cursor no longer
-# sits exactly over your fingertip: drop your hand out of view and bring it back to "lift the mouse".
 
 # ---- PRECISION POINTER ----------------------------------------------------------------------------
 # Move slowly and the cursor moves only part as far, so tiny targets are easy to hit. Move quickly and
@@ -293,3 +289,11 @@ PRECISE_CATCHUP_SPEED = 0.9   # moving this fast, the cursor snaps back under yo
 DRAW_SAME_SCALE = True     # draw mode: one fixed scale with the pen up or down, and the cursor stays where you
                            # lifted the pen (no sliding back). Letters come out the same size. False = old way.
 SKETCH_CLICK_AWAY = True   # click anywhere outside the sketch window to put it away (draw mode turns off too)
+
+# ---- SMOOTH CURSOR (glide) ------------------------------------------------------------------
+# The camera only sees your hand ~30 times a second, so the cursor used to hop. With GLIDE on, it
+# slides to each new spot in small steps (GLIDE_HZ times a second). Smoother, but it trails your
+# hand by up to one camera frame.
+GLIDE = True
+GLIDE_SECONDS = 0       # how long each slide takes. 0 = automatic (one camera frame).
+GLIDE_HZ = 120          # steps per second (your screen's refresh rate is a good choice)
