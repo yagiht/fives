@@ -493,6 +493,9 @@ def main() -> None:
     pinch = g.PinchDetector(config.PINCH_START, config.PINCH_END, config.PINCH_RELEASE_MARGIN,
                             config.PINCH_DRAG_END)
     smooth = g.OneEuroFilter(config.MIN_CUTOFF, config.BETA)
+    glitch_guard = None          # ignore one-frame tracking glitches (config.GLITCH_GUARD)
+    if getattr(config, "GLITCH_GUARD", False):
+        glitch_guard = g.GlitchGuard(getattr(config, "GLITCH_JUMP", 0.2), getattr(config, "GLITCH_HOLD_FRAMES", 2))
     accel = None                 # precision pointer (config.PRECISE): slow hand = precise, fast hand = pinned
     if getattr(config, "PRECISE", False):
         accel = g.PrismPointer(getattr(config, "PRECISE_SPEED", 0.35), getattr(config, "PRECISE_MIN_SCALE", 0.35),
@@ -745,6 +748,8 @@ def main() -> None:
             if result.hand_landmarks:
                 hand = result.hand_landmarks[0]         # first hand found
                 points = [(lm.x, lm.y) for lm in hand]  # 21 (x, y) pairs, 0..1
+                if glitch_guard is not None:
+                    points = glitch_guard.update(points)    # a one-frame "teleport" is a tracking glitch: ignore it
                 h, w = frame.shape[:2]
 
                 # 3. meaning
@@ -921,6 +926,8 @@ def main() -> None:
                 smooth.reset()
                 palm_smooth.reset()
                 draw_smooth.reset()
+                if glitch_guard is not None:
+                    glitch_guard.reset()
                 if accel is not None:
                     accel.hand_gone()
                 history.clear()

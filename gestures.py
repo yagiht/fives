@@ -541,6 +541,36 @@ class DrawPen:
         return []
 
 
+class GlitchGuard:
+    """Ignores tracking glitches: frames where MediaPipe briefly puts the hand somewhere it can't be.
+
+    If the fingertip "teleports" more than `jump` (fraction of the picture) in one frame, we keep using
+    the last good hand for up to `hold` frames. If the hand is still over there after that, it was real
+    (a very fast move, or you moved your hand away and back), so we follow it.
+    """
+
+    def __init__(self, jump=0.2, hold=2, tip=8):
+        self.jump, self.hold, self.tip = jump, hold, tip
+        self.last = None          # last good set of points
+        self.held = 0
+        self.glitches = 0
+
+    def update(self, points):
+        """points = the 21 (x, y) hand points this frame. Returns the points to use."""
+        if self.last is not None:
+            (x, y), (lx, ly) = points[self.tip], self.last[self.tip]
+            if max(abs(x - lx), abs(y - ly)) > self.jump and self.held < self.hold:
+                self.held += 1
+                self.glitches += 1
+                return self.last
+        self.last, self.held = points, 0
+        return points
+
+    def reset(self):
+        """The hand left the picture: start fresh when it comes back."""
+        self.last, self.held = None, 0
+
+
 class PrismPointer:
     """Precise when slow, pinned when fast (the "PRISM" technique from VR research).
 

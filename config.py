@@ -297,3 +297,11 @@ SKETCH_CLICK_AWAY = True   # click anywhere outside the sketch window to put it 
 GLIDE = True
 GLIDE_SECONDS = 0       # how long each slide takes. 0 = automatic (one camera frame).
 GLIDE_HZ = 120          # steps per second (your screen's refresh rate is a good choice)
+
+# ---- GLITCH GUARD ------------------------------------------------------------------------------
+# Sometimes the tracker briefly puts your fingertip somewhere it can't be (dark room, finger turned
+# away). If it "teleports" more than GLITCH_JUMP of the picture in one frame, keep the last good hand
+# for up to GLITCH_HOLD_FRAMES frames. If it's still there after that, it was real: follow it.
+GLITCH_GUARD = True
+GLITCH_JUMP = 0.2            # fraction of the picture (0.2 = 20%). Lower catches more, but may ignore real flicks
+GLITCH_HOLD_FRAMES = 2
