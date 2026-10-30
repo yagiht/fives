@@ -541,6 +541,68 @@ class DrawPen:
         return []
 
 
+class PrismPointer:
+    """Precise when slow, pinned when fast (the "PRISM" technique from VR research).
+
+      slow, careful hand -> the cursor moves only a fraction as far (min_scale..1): precise aiming
+      fast hand          -> the cursor moves 1:1 AND catches back up to your fingertip,
+                            so any gap built up while aiming slowly disappears
+      still hand         -> nothing moves (no slow drift behind your back)
+
+    Works on camera positions (0..1). update() returns the offset (cursor - fingertip); add it to
+    every hand point and the rest of FIVES works unchanged. The offset is usually 0, so the cursor
+    is right under your finger; it only opens up a little while you aim slowly.
+    """
+
+    def __init__(self, precise_speed=0.35, min_scale=0.35, catchup_speed=0.9, lo=0.0, hi=1.0):
+        self.precise_speed = precise_speed      # below this hand speed (picture widths / s): slowed down
+        self.min_scale = min_scale              # the slowest the cursor goes, as a fraction of your hand
+        self.catchup_speed = catchup_speed      # at this speed the gap closes fastest
+        self.lo, self.hi = lo, hi
+        self.off = (0.0, 0.0)
+        self.prev = None
+        self.t = None
+        self.last_scale = 1.0
+
+    def scale(self, speed: float) -> float:
+        """How far the cursor moves for each bit your hand moves, at this hand speed."""
+        return min(1.0, max(self.min_scale, speed / max(1e-6, self.precise_speed)))
+
+    def catchup(self, speed: float) -> float:
+        """What fraction of the gap to close this frame (0 when slow, up to 0.5 when fast)."""
+        span = max(1e-6, self.catchup_speed - self.precise_speed)
+        return 0.5 * min(1.0, max(0.0, (speed - self.precise_speed) / span))
+
+    def update(self, hand, t, frozen=False, passthrough=False):
+        """hand = smoothed fingertip (0..1). frozen = keep the cursor still (open palm).
+        passthrough = follow the hand 1:1 and keep the current gap (draw mode has its own scale). Returns the offset."""
+        if self.prev is not None and passthrough:
+            self.prev, self.t = hand, t
+            return self.off
+        if self.prev is not None:
+            dt = max(t - self.t, 1e-3)
+            dx, dy = hand[0] - self.prev[0], hand[1] - self.prev[1]
+            if frozen:                          # cursor holds still while the hand moves: absorb it
+                ox, oy = self.off[0] - dx, self.off[1] - dy
+            else:
+                speed = math.hypot(dx, dy) / dt
+                k = self.last_scale = self.scale(speed)
+                ox, oy = self.off[0] + (k - 1) * dx, self.off[1] + (k - 1) * dy
+                c = self.catchup(speed)
+                ox, oy = ox * (1 - c), oy * (1 - c)
+            # keep the cursor inside the usable area (pushing past the edge just slides the gap)
+            cx = min(self.hi, max(self.lo, hand[0] + ox))
+            cy = min(self.hi, max(self.lo, hand[1] + oy))
+            self.off = (cx - hand[0], cy - hand[1])
+        self.prev, self.t = hand, t
+        return self.off
+
+    def hand_gone(self):
+        """The hand left the picture: when it comes back the cursor is under your finger again."""
+        self.prev = None
+        self.off = (0.0, 0.0)
+
+
 class KeyPen:
     """KEY DRAW MODE: the pen is a key you hold. The hand only POINTS.
 
@@ -553,8 +615,9 @@ class KeyPen:
     update() returns actions: ("down", pos) / ("up", pos). Positions are camera 0..1.
     """
 
-    def __init__(self, gain, lost_release, resync_seconds=0.0):
+    def __init__(self, gain, lost_release, resync_seconds=0.0, constant=False):
         self.gain = gain
+        self.constant = constant                # True: the same scale with the pen up or down (like real paper)
         self.lost_release = lost_release
         self.resync_seconds = resync_seconds    # pen up: cursor drifts back under your fingertip over about this long
         self.down = False
@@ -562,6 +625,13 @@ class KeyPen:
         self.pos = None          # where the cursor is (camera 0..1)
         self.prev = None         # where the hand was last frame
         self.lost_since = None
+        self.locked = False      # after a snap: ignore the pen key until it is let go
+
+    def snapped(self):
+        """A stroke was just snapped and redrawn: pen is up, and stays up until you release the key."""
+        self.down = False
+        self.lost_since = None
+        self.locked = True
 
     def reset(self):
         """Pen up (cursor stays put). Returns the actions needed to let go."""
@@ -588,10 +658,15 @@ class KeyPen:
         """hand = where your fingertip is (smoothed). key_down = the pen key is held."""
         self.lost_since = None
         actions = []
+        if self.locked:
+            if key_down:
+                key_down = False
+            else:
+                self.locked = False
         if self.pos is None:
             self.pos = hand
         if self.prev is not None:
-            k = self.gain if self.down or key_down else 1.0
+            k = self.gain if (self.constant or self.down or key_down) else 1.0
             self.pos = (min(1.0, max(0.0, self.pos[0] + k * (hand[0] - self.prev[0]))),
                         min(1.0, max(0.0, self.pos[1] + k * (hand[1] - self.prev[1]))))
         if not key_down and not self.down and self.resync_seconds > 0 and self.last_t is not None:

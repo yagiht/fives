@@ -24,6 +24,17 @@ import os
 import cv2
 import numpy as np
 
+
+def draw_key_label():
+    """The draw-mode hotkey as written in config.py, e.g. ["ctrl", "esc"] -> "CTRL+ESC"."""
+    try:
+        import config
+        keys = getattr(config, "DRAW_TOGGLE_HOTKEY", ["cmd", "esc"]) or ["cmd", "esc"]
+    except Exception:
+        keys = ["cmd", "esc"]
+    names = {"alt": "OPT", "option": "OPT"}
+    return "+".join(names.get(k, k.upper()) for k in keys)
+
 try:
     from PIL import Image, ImageDraw, ImageFont
     _DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
@@ -366,7 +377,7 @@ class Hud:
         d.text(chrome, label, (tx, ty), 0.5, WHITE, 1, 4, FONT_BOLD)
         self.title_dot = (tx - 16, ty - 9)
 
-        keys = [("CMD+SHIFT", "SCROLL"), ("CMD+ESC", "DRAW"), ("OPT", "INK"),
+        keys = [("CMD+SHIFT", "SCROLL"), (draw_key_label(), "DRAW"), ("OPT", "INK"),
                 ("C", "CURSOR"), ("CTRL+SHIFT", "MUSIC"), ("PALM SWIPE", "MUSIC"), ("H", "VIEW"), ("T", "HOLO"), ("[ ]", "TINT"), ("Q", "QUIT")]
         pieces = [(a, b, d.text_width(a, 0.36, 1, 1) + 8 + d.text_width(b, 0.34, 1, 2) + 20) for a, b in keys]
         total = sum(p[2] for p in pieces) + 6 * (len(pieces) - 1)

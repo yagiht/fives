@@ -100,7 +100,7 @@ REWIND_SECONDS = 0.25
 CONTROL_CURSOR = False
 # Only the middle part of the camera image maps to your screen, so you can
 # reach the screen edges without your finger leaving the camera's view.
-CURSOR_MARGIN = 0.15
+CURSOR_MARGIN = 0.22
 
 # ---------------------------------------------------------------------------
 # Clicking, dragging, right click, scroll (cursor mode only)
@@ -155,7 +155,7 @@ DRAG_SETTLE_BLEND = 0.15
 #           (Best for precision. Pinch, drag and scroll-by-pinch are off while draw mode is on.)
 #   "pinch" HOLD DRAW_HOTKEY, then pinch = ink down, let go = ink up (settings further below).
 DRAW_PEN = "key"
-DRAW_TOGGLE_HOTKEY = ["cmd", "esc"]     # tap these together (Cmd + Escape)
+DRAW_TOGGLE_HOTKEY = ["ctrl", "esc"]     # tap these together (Cmd + Escape)
 DRAW_PEN_KEY = "alt"                    # any of "space", "cmd", "shift", "ctrl", "alt". If the
                                         # drawing site reacts to Space, try "ctrl".
 # While the pen is down, your hand moves the cursor this fraction as far. 1 = same as normal,
@@ -246,3 +246,50 @@ FLICK_SECONDS = 0.45
 FLICK_PALM_FACTOR = 1.15
 FLICK_DEBUG = True
 FLICK_DISTANCE = 0.7
+# HOLD TO SNAP (like Apple Pencil) - in draw mode, draw a shape and HOLD STILL at the end.
+# FIVES undoes your wobbly stroke in the app (Cmd+Z) and redraws it clean: straight line,
+# circle, ellipse, triangle, rectangle or square. Other strokes get smoothed. The app needs a working undo.
+SNAP = True
+SNAP_HOLD_SECONDS = 0.4      # how long to hold still. Snaps by accident? raise it. Too slow? lower it.
+SNAP_HOLD_RADIUS = 12        # pixels you may wobble while "holding still"
+SNAP_MIN_LENGTH = 60         # strokes shorter than this (pixels) never snap, so dots stay dots
+SNAP_STEP_PX = 6             # spacing of the redrawn points
+SNAP_UNDO_WAIT = 0.08        # seconds to let the app finish letting go / undoing. Not undoing? raise it.
+SNAP_REPLAY_DELAY = 0.002    # seconds between redrawn points. Redraw looks jagged? raise it.
+
+# SNAP PEN KEY: Option is now a plain pen. This key draws AND snaps after a short hold.
+SNAP_PEN_KEY = "ctrl"      # any of "ctrl", "shift", "cmd", "space" (not the same as DRAW_PEN_KEY)
+SNAP_QUICK_SECONDS = 0.1   # how long to hold still before it snaps. Snaps mid-stroke by accident? raise it.
+SNAP_QUICK_RADIUS = 8      # pixels you may wobble while "holding still"
+
+# SNAP PEN KEY: Option is now a plain pen. This key draws AND snaps after a short hold.
+SNAP_PEN_KEY = "ctrl"      # any of "ctrl", "shift", "cmd", "space" (not the same as DRAW_PEN_KEY)
+SNAP_QUICK_SECONDS = 0.1   # how long to hold still before it snaps. Snaps mid-stroke by accident? raise it.
+SNAP_QUICK_RADIUS = 8      # pixels you may wobble while "holding still"
+
+# SKETCH WINDOW. Tap Cmd+Esc: a sketch window opens (and draw mode turns on). Draw on a blank page or
+# mark up a PDF. Option = plain pen, Control = pen that snaps shapes. Tap Cmd+Esc again to put it away.
+# Needs:  pip install pymupdf        (turn SKETCH off to go back to drawing in whatever app you are in)
+SKETCH = True
+SKETCH_FOLDER = "~/Documents/FIVES Notes"   # where marked-up copies are saved (your original PDF is never changed)
+SKETCH_AUTOSAVE = True                      # save the marked-up copy whenever you put the window away
+SKETCH_SMOOTH_PASSES = 2                    # how much a finished stroke is smoothed (0 = none, 5 = very calm)
+SKETCH_LIVE_FOLLOW = 0.6                    # 1 = ink goes exactly where you point; lower = calmer while drawing
+
+# ---- POINTER ACCELERATION ---------------------------------------------------------------------
+# Like a trackpad: move your hand slowly and the cursor moves LESS (precise aiming); flick it
+# quickly and the cursor moves MORE (cross the screen with a small motion). The cursor no longer
+# sits exactly over your fingertip: drop your hand out of view and bring it back to "lift the mouse".
+
+# ---- PRECISION POINTER ----------------------------------------------------------------------------
+# Move slowly and the cursor moves only part as far, so tiny targets are easy to hit. Move quickly and
+# it moves 1:1 and catches back up to your fingertip, so it never wanders off. (The "PRISM" idea from VR.)
+PRECISE = True
+PRECISE_SPEED = 0.35          # below this hand speed (picture widths per second) the cursor slows down
+PRECISE_MIN_SCALE = 0.35      # slowest: the cursor moves this fraction of your hand. Lower = more precise
+PRECISE_CATCHUP_SPEED = 0.9   # moving this fast, the cursor snaps back under your finger quickest
+
+# ---- DRAW MODE LIKE PAPER + SKETCH WINDOW CLICK-AWAY ---------------------------------------------
+DRAW_SAME_SCALE = True     # draw mode: one fixed scale with the pen up or down, and the cursor stays where you
+                           # lifted the pen (no sliding back). Letters come out the same size. False = old way.
+SKETCH_CLICK_AWAY = True   # click anywhere outside the sketch window to put it away (draw mode turns off too)
