@@ -1,6 +1,6 @@
 # FIVES
 
-<!-- 📍 GIF 1 (main demo, 10-15 s): point, pinch-click, drag, scroll. Drag the file in here. -->
+ <img width="304" height="198" alt="Adobe Express - Screen Recording 2026-10-30 at 12 33 37 AM (1)" src="https://github.com/user-attachments/assets/ccc84dbb-cf2a-4f3d-9f22-1399c461976c" />
 
 A personal assistant for iMac, an attempt to make a futuristic workflow that replaces keyboard and mouse with your hands. This project has two parts:
 
@@ -11,7 +11,8 @@ Work in progress :D
 
 ## The idea
 
-It has always been a pain for me to have a billion tabs open on chrome, and  
+I have always wanted to create an AI-based workflow where I am liberated from the conventional tools of a keyboard, mouse, and chrome windows. The goal is to create a smooth, usable interface that has separate, easily movable windows, all conducted by your hands
+
 
 ## Built vs planned
 
